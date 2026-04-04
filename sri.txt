@@ -1,3 +1,0 @@
-https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js=sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU
-https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js=sha384-KA7m0DwgQGmeRC6Xre3hJO+ZxpanOauVh4Czdqbg8lDKJ3bZZYVYmP+y4F31x40L
-https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js=sha384-ZSs6LKr2GoUPDyHrN+rCQgyHL1yUyok5xMniSrgeRG7rUvA6vTmxronM1eZOfjgz

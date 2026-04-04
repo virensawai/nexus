@@ -73,3 +73,7 @@ require('./sockets/chat')(io, onlineUsers);
 
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => console.log(`Nexus server running on port ${PORT}`));
+
+app.get('/ping', (req, res) => {
+  res.status(200).send('Server is awake');
+});

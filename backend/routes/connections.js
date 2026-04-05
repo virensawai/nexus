@@ -31,24 +31,15 @@ router.post('/', authMiddleware, async (req, res) => {
     if (me.connections.length >= 5) return res.status(400).json({ error: 'You already have 5 connections. Remove one to add more.' });
     if (them.connections.length >= 5) return res.status(400).json({ error: 'That user already has 5 connections.' });
 
-    // Atomic DB checks (connections.4 prevents 5+ elements arrays)
-    const updatedMe = await User.findOneAndUpdate(
-      { _id: me._id, [`connections.4`]: { $exists: false } },
-      { $addToSet: { connections: them._id } },
-      { new: true }
-    );
-    if (!updatedMe) return res.status(400).json({ error: 'You already have 5 connections.' });
-
-    const updatedThem = await User.findOneAndUpdate(
-      { _id: them._id, [`connections.4`]: { $exists: false } },
-      { $addToSet: { connections: me._id } },
-      { new: true }
-    );
-
-    if (!updatedThem) {
-      // Rollback me since theirs failed
-      await User.findByIdAndUpdate(me._id, { $pull: { connections: them._id } });
-      return res.status(400).json({ error: 'That user already has 5 connections.' });
+    // Safely mutated using native save for reliability over findOneAndUpdate
+    if (!me.connections.includes(them._id)) {
+        me.connections.push(them._id);
+        await me.save();
+    }
+    
+    if (!them.connections.includes(me._id)) {
+        them.connections.push(me._id);
+        await them.save();
     }
 
     // Notify target user if online (using socket)

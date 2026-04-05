@@ -52,6 +52,8 @@ module.exports = (io, onlineUsers) => {
           return socket.emit('error', 'Payload size rejected.');
         }
 
+        console.log(`[chat] send_message from userId=${userId} to receiverId=${receiverId}`);
+
         const me = await User.findById(userId).select('connections');
         if (!me.connections.some(c => c.toString() === receiverId))
           return socket.emit('error', 'Not connected to this user');
@@ -65,25 +67,33 @@ module.exports = (io, onlineUsers) => {
         });
 
         const payload = {
-          _id: msg._id,
+          _id: msg._id.toString(),
           conversationId: convId,
-          sender: userId,
-          receiver: receiverId,
+          sender: String(userId),
+          receiver: String(receiverId),
           text: msg.text,
           read: false,
           createdAt: msg.createdAt
         };
 
+        console.log(`[chat] payload sender=${payload.sender} receiver=${payload.receiver} _id=${payload._id}`);
+
         // Emit to sender across all open tabs
         const ownSockets = onlineUsers.get(userId);
         if (ownSockets) {
+          console.log(`[chat] Emitting message_sent to ${ownSockets.size} sender socket(s)`);
           ownSockets.forEach(sockId => io.to(sockId).emit('message_sent', payload));
+        } else {
+          console.warn(`[chat] No sender sockets found for userId=${userId}`);
         }
 
         // Emit dynamically to ALL tabs opened by target receiver
         const receiverSockets = onlineUsers.get(receiverId);
         if (receiverSockets && receiverSockets.size > 0) {
+          console.log(`[chat] Emitting new_message to ${receiverSockets.size} receiver socket(s)`);
           receiverSockets.forEach(sockId => io.to(sockId).emit('new_message', payload));
+        } else {
+          console.log(`[chat] Receiver ${receiverId} is offline, no sockets found`);
         }
 
       } catch (e) { 

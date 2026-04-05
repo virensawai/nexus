@@ -1,17 +1,3 @@
-async function openChat(userId) {
-  state.activeChatId = userId;
-  state.unread[userId] = 0;
-
-  // 1. HIDE SIDEBAR IMMEDIATELY ON TAP
-  mobileHideSidebar(); 
-
-  document.getElementById('chat-empty').style.display = 'none';
-  const panel = document.getElementById('chat-panel');
-  panel.classList.remove('hidden');
-
-  updateChatHeader();
-  renderConnections();
-
 /* ── Config ──────────────────────────────────────────────────────── */
 const API = window.CONFIG.API;
 let socket = null;

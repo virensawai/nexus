@@ -7,13 +7,28 @@ let state = {
   me: null,
   connections: [],
   activeChatId: null,
-  messages: {},        // { userId: [msg, ...] }
-  unread: {},          // { userId: count }
+  messages: {},        // { visibleUserId: [msg, ...] }
+  unread: {},          // { visibleUserId: count }
   scannerStream: null,
   scannerInterval: null,
   scannedUser: null,
   currentTab: 'login'
 };
+
+/* ── ID Helpers (normalize _id / id mismatches) ──────────────────── */
+function getMyId() {
+  if (!state.me) return null;
+  return String(state.me._id || state.me.id);
+}
+
+function getConnId(conn) {
+  return String(conn._id || conn.id);
+}
+
+function idsMatch(a, b) {
+  if (!a || !b) return false;
+  return String(a) === String(b);
+}
 
 /* ── Init ─────────────────────────────────────────────────────────── */
 window.addEventListener('load', async () => {
@@ -117,44 +132,51 @@ function connectSocket() {
   socket.on('connect', () => console.log('Socket connected'));
 
   socket.on('new_message', (msg) => {
-    pushMessage(msg);
-    if (state.activeChatId !== msg.sender) {
-      state.unread[msg.sender] = (state.unread[msg.sender] || 0) + 1;
+    console.log('[socket] new_message', msg);
+    const otherUserId = pushMessage(msg);
+    if (!idsMatch(state.activeChatId, otherUserId)) {
+      state.unread[otherUserId] = (state.unread[otherUserId] || 0) + 1;
       renderConnections();
     } else {
       socket.emit('mark_read', { senderId: msg.sender });
-      renderMessages(msg.sender); // Keep screen up to date
+      renderMessages(state.activeChatId);
       scrollToBottom();
     }
-    updateConnLastMsg(msg.sender, msg.text);
+    renderConnections();
   });
 
   socket.on('message_sent', (msg) => {
-    pushMessage(msg);
-    renderMessages(state.activeChatId);
-    scrollToBottom();
-    updateConnLastMsg(msg.receiver, msg.text);
+    console.log('[socket] message_sent', msg);
+    const otherUserId = pushMessage(msg);
+    if (state.activeChatId && idsMatch(state.activeChatId, otherUserId)) {
+      renderMessages(state.activeChatId);
+      scrollToBottom();
+    }
+    renderConnections();
   });
 
   socket.on('messages_read', ({ by }) => {
-    if (state.messages[by]) {
-      state.messages[by].forEach(m => { if (m.sender === state.me.id || m.sender === state.me._id) m.read = true; });
-      if (state.activeChatId === by) renderMessages(by);
+    const byStr = String(by);
+    if (state.messages[byStr]) {
+      const myId = getMyId();
+      state.messages[byStr].forEach(m => { if (idsMatch(m.sender, myId)) m.read = true; });
+      if (idsMatch(state.activeChatId, byStr)) renderMessages(state.activeChatId);
     }
   });
 
   socket.on('user_status', ({ userId, isOnline, lastSeen }) => {
-    const conn = state.connections.find(c => c._id === userId || c.id === userId);
+    const conn = state.connections.find(c => idsMatch(getConnId(c), userId));
     if (conn) {
       conn.isOnline = isOnline;
       conn.lastSeen = lastSeen;
       renderConnections();
-      if (state.activeChatId === userId) updateChatHeader();
+      if (idsMatch(state.activeChatId, userId)) updateChatHeader();
     }
   });
 
   socket.on('new_connection', (user) => {
-    if(!state.connections.find(c => c.id === user.id || c._id === user.id)){
+    const uid = getConnId(user);
+    if(!state.connections.find(c => idsMatch(getConnId(c), uid))){
        state.connections.push(user);
        renderConnections();
     }
@@ -194,8 +216,8 @@ function renderConnections() {
   }
 
   state.connections.forEach(c => {
-    const uid = c._id || c.id;
-    const isActive = state.activeChatId === uid;
+    const uid = getConnId(c);
+    const isActive = idsMatch(state.activeChatId, uid);
     const unread = state.unread[uid] || 0;
     const statusClass = c.isOnline ? 'online' : 'offline';
     const lastMsg = state.messages[uid]?.slice(-1)[0]?.text || '';
@@ -242,8 +264,9 @@ function renderConnections() {
 
 /* ── Chat ─────────────────────────────────────────────────────────── */
 async function openChat(userId) {
-  state.activeChatId = userId;
-  state.unread[userId] = 0;
+  const uid = String(userId);
+  state.activeChatId = uid;
+  state.unread[uid] = 0;
 
   document.getElementById('chat-empty').style.display = 'none';
   const panel = document.getElementById('chat-panel');
@@ -253,26 +276,26 @@ async function openChat(userId) {
   renderConnections();
 
   // Load messages if not cached
-  if (!state.messages[userId]) {
+  if (!state.messages[uid]) {
     document.getElementById('msg-loading').style.display = 'block';
     try {
-      const res = await apiFetch(`/messages/${userId}`);
+      const res = await apiFetch(`/messages/${uid}`);
       const msgs = await res.json();
-      state.messages[userId] = msgs;
+      state.messages[uid] = msgs;
     } catch (e) { console.error(e); }
   }
 
-  renderMessages(userId);
+  renderMessages(uid);
   scrollToBottom();
 
-  if (socket) socket.emit('mark_read', { senderId: userId });
+  if (socket) socket.emit('mark_read', { senderId: uid });
   mobileHideSidebar();
   document.getElementById('msg-input').focus();
 }
 
 function updateChatHeader() {
   const uid = state.activeChatId;
-  const conn = state.connections.find(c => (c._id || c.id) === uid);
+  const conn = state.connections.find(c => idsMatch(getConnId(c), uid));
   if (!conn) return;
   document.getElementById('chat-avatar').textContent = conn.username[0].toUpperCase();
   document.getElementById('chat-name').textContent = conn.username;
@@ -311,7 +334,8 @@ function renderMessages(userId) {
       lastDate = dateStr;
     }
 
-    const isSent = (msg.sender === state.me.id || msg.sender === state.me._id || (msg.sender && msg.sender._id === state.me._id));
+    const myId = getMyId();
+    const isSent = idsMatch(msg.sender, myId) || (msg.sender && idsMatch(msg.sender._id, myId));
     
     const row = document.createElement('div');
     row.className = `msg-row ${isSent ? 'sent' : 'received'}`;
@@ -357,11 +381,14 @@ function sendMessage() {
 }
 
 function pushMessage(msg) {
-  const uid = (msg.sender === state.me.id || msg.sender === state.me._id) ? msg.receiver : msg.sender;
+  const myId = getMyId();
+  // The "other user" is whoever is NOT me in this message
+  const uid = idsMatch(msg.sender, myId) ? String(msg.receiver) : String(msg.sender);
   if (!state.messages[uid]) state.messages[uid] = [];
   if (!state.messages[uid].find(m => m._id === msg._id)) {
     state.messages[uid].push(msg);
   }
+  return uid; // Return the key so callers can use it
 }
 
 function scrollToBottom() {
@@ -373,12 +400,12 @@ function scrollToBottom() {
 
 async function removeConnection() {
   if (!state.activeChatId) return;
-  const conn = state.connections.find(c => (c._id || c.id) === state.activeChatId);
+  const conn = state.connections.find(c => idsMatch(getConnId(c), state.activeChatId));
   if (!confirm(`Remove ${conn?.username} from your connections?`)) return;
 
   try {
     await apiFetch(`/connect/${state.activeChatId}`, 'DELETE');
-    state.connections = state.connections.filter(c => (c._id || c.id) !== state.activeChatId);
+    state.connections = state.connections.filter(c => !idsMatch(getConnId(c), state.activeChatId));
     delete state.messages[state.activeChatId];
     state.activeChatId = null;
     document.getElementById('chat-panel').classList.add('hidden');

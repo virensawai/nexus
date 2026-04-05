@@ -126,17 +126,51 @@ function connectSocket() {
   
   // Pass JWT during handshake connection via socket
   socket = io(window.CONFIG.SOCKET, { 
-    auth: { token: localStorage.getItem('nexus_token') } 
+    auth: { token: localStorage.getItem('nexus_token') },
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 10000
   });
 
-  socket.on('connect', () => console.log('Socket connected'));
+  socket.on('connect', () => {
+    console.log('[socket] Connected, id:', socket.id);
+    toast('Connected to server', 'success');
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.warn('[socket] Disconnected:', reason);
+    if (reason === 'io server disconnect') {
+      // Server forced disconnect — reconnect manually
+      socket.connect();
+    }
+    // Otherwise socket.io will auto-reconnect
+  });
+
+  socket.on('connect_error', (err) => {
+    console.error('[socket] Connection error:', err.message);
+  });
+
+  socket.on('reconnect', (attemptNumber) => {
+    console.log('[socket] Reconnected after', attemptNumber, 'attempts');
+    toast('Reconnected to server', 'success');
+  });
+
+  socket.on('reconnect_attempt', (attemptNumber) => {
+    console.log('[socket] Reconnection attempt', attemptNumber);
+  });
 
   socket.on('new_message', (msg) => {
-    console.log('[socket] new_message', msg);
+    console.log('[socket] new_message received:', JSON.stringify(msg));
+    const myId = getMyId();
+    console.log('[socket] myId:', myId, 'msg.sender:', msg.sender, 'msg.receiver:', msg.receiver);
+    
     const otherUserId = pushMessage(msg);
+    console.log('[socket] new_message stored under key:', otherUserId, 'activeChatId:', state.activeChatId);
+    
     if (!idsMatch(state.activeChatId, otherUserId)) {
       state.unread[otherUserId] = (state.unread[otherUserId] || 0) + 1;
-      renderConnections();
     } else {
       socket.emit('mark_read', { senderId: msg.sender });
       renderMessages(state.activeChatId);
@@ -146,8 +180,14 @@ function connectSocket() {
   });
 
   socket.on('message_sent', (msg) => {
-    console.log('[socket] message_sent', msg);
+    console.log('[socket] message_sent received:', JSON.stringify(msg));
+    const myId = getMyId();
+    console.log('[socket] myId:', myId, 'msg.sender:', msg.sender, 'msg.receiver:', msg.receiver);
+    
     const otherUserId = pushMessage(msg);
+    console.log('[socket] message_sent stored under key:', otherUserId, 'activeChatId:', state.activeChatId);
+    
+    // Always re-render if this chat is active
     if (state.activeChatId && idsMatch(state.activeChatId, otherUserId)) {
       renderMessages(state.activeChatId);
       scrollToBottom();
@@ -275,14 +315,21 @@ async function openChat(userId) {
   updateChatHeader();
   renderConnections();
 
-  // Load messages if not cached
-  if (!state.messages[uid]) {
-    document.getElementById('msg-loading').style.display = 'block';
-    try {
-      const res = await apiFetch(`/messages/${uid}`);
-      const msgs = await res.json();
-      state.messages[uid] = msgs;
-    } catch (e) { console.error(e); }
+  // Always fetch messages from server to ensure we have the latest
+  // But preserve any optimistic messages that might already be in the array
+  document.getElementById('msg-loading').style.display = 'block';
+  try {
+    const res = await apiFetch(`/messages/${uid}`);
+    const serverMsgs = await res.json();
+    
+    // Merge: keep any local-only (optimistic) messages not yet in server response
+    const existingLocal = state.messages[uid] || [];
+    const serverIds = new Set(serverMsgs.map(m => String(m._id)));
+    const localOnly = existingLocal.filter(m => m._optimistic && !serverIds.has(String(m._id)));
+    
+    state.messages[uid] = [...serverMsgs, ...localOnly];
+  } catch (e) { 
+    console.error('Failed to load messages:', e); 
   }
 
   renderMessages(uid);
@@ -374,20 +421,67 @@ function renderMessages(userId) {
 function sendMessage() {
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
-  if (!text || !state.activeChatId || !socket) return;
+  if (!text || !state.activeChatId) return;
 
-  socket.emit('send_message', { receiverId: state.activeChatId, text });
+  // Check socket health
+  if (!socket || !socket.connected) {
+    toast('Connection lost. Reconnecting...', 'error');
+    if (socket) socket.connect();
+    return;
+  }
+
+  const myId = getMyId();
+  const uid = state.activeChatId;
+
+  // Optimistic UI: immediately show the message in the chat
+  const optimisticMsg = {
+    _id: 'opt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+    sender: myId,
+    receiver: uid,
+    text: text,
+    read: false,
+    createdAt: new Date().toISOString(),
+    _optimistic: true
+  };
+
+  if (!state.messages[uid]) state.messages[uid] = [];
+  state.messages[uid].push(optimisticMsg);
+  renderMessages(uid);
+  scrollToBottom();
+  renderConnections();
+
+  socket.emit('send_message', { receiverId: uid, text });
   input.value = '';
 }
 
 function pushMessage(msg) {
   const myId = getMyId();
   // The "other user" is whoever is NOT me in this message
-  const uid = idsMatch(msg.sender, myId) ? String(msg.receiver) : String(msg.sender);
+  const isMine = idsMatch(msg.sender, myId);
+  const uid = isMine ? String(msg.receiver) : String(msg.sender);
+  
   if (!state.messages[uid]) state.messages[uid] = [];
-  if (!state.messages[uid].find(m => m._id === msg._id)) {
+  
+  // Check for duplicates by _id (skip optimistic placeholder comparison)
+  const isDuplicate = state.messages[uid].some(m => {
+    if (m._optimistic) return false; // never consider optimistic msgs as duplicates
+    return String(m._id) === String(msg._id);
+  });
+  
+  if (!isDuplicate) {
+    // If this is a server-confirmed version of an optimistic message, remove the optimistic one
+    if (isMine) {
+      // Remove any optimistic message with matching text + receiver sent around the same time
+      const optIdx = state.messages[uid].findIndex(m => 
+        m._optimistic && m.text === msg.text && idsMatch(m.receiver, msg.receiver)
+      );
+      if (optIdx !== -1) {
+        state.messages[uid].splice(optIdx, 1);
+      }
+    }
     state.messages[uid].push(msg);
   }
+  
   return uid; // Return the key so callers can use it
 }
 

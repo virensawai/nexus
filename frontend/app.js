@@ -320,7 +320,20 @@ async function openChat(userId) {
   document.getElementById('msg-loading').style.display = 'block';
   try {
     const res = await apiFetch(`/messages/${uid}`);
-    const serverMsgs = await res.json();
+    let serverMsgs;
+    try {
+      serverMsgs = await res.json();
+    } catch (e) {
+      serverMsgs = [];
+    }
+    
+    if (!res.ok) {
+        throw new Error(serverMsgs.error || 'Unknown server error');
+    }
+
+    if (!Array.isArray(serverMsgs)) {
+        serverMsgs = [];
+    }
     
     // Merge: keep any local-only (optimistic) messages not yet in server response
     const existingLocal = state.messages[uid] || [];
@@ -329,7 +342,10 @@ async function openChat(userId) {
     
     state.messages[uid] = [...serverMsgs, ...localOnly];
   } catch (e) { 
-    console.error('Failed to load messages:', e); 
+    console.error('Failed to load messages (falling back to cache/empty):', e); 
+    if (!state.messages[uid]) {
+        state.messages[uid] = [];
+    }
   }
 
   renderMessages(uid);

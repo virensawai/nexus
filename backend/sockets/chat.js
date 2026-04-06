@@ -3,7 +3,6 @@ const User = require('../models/User');
 const Message = require('../models/Message');
 const { makeConversationId } = require('../routes/messages');
 const { JWT_SECRET } = require('../routes/auth');
-const cookie = require('cookie'); 
 // TODO (State Migration): Render free instances spin down after inactivity. 
 // When they wake up, the in-memory Map() is wiped. 
 // Recommend using MongoDB or Redis (Render provides Free Redis):

@@ -50,12 +50,13 @@ router.post('/', authMiddleware, async (req, res) => {
     if (targetSockets && targetSockets.size > 0 && io) {
       targetSockets.forEach(socketId => {
         io.to(socketId).emit('new_connection', {
-          id: me._id, username: me.username, qrCode: me.qrCode
+          id: me._id, username: me.username, qrCode: me.qrCode, isOnline: true
         });
       });
     }
 
-    res.json({ success: true, user: { id: them._id, username: them.username, qrCode: them.qrCode } });
+    const themOnline = onlineUsers.has(them._id.toString()) && onlineUsers.get(them._id.toString()).size > 0;
+    res.json({ success: true, user: { id: them._id, username: them.username, qrCode: them.qrCode, isOnline: themOnline } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Internal Server Error' });

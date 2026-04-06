@@ -60,9 +60,14 @@ router.post('/register', registerLimiter, async (req, res) => {
 router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
-    const user = await User.findOne({ username });
+    let user = await User.findOne({ username });
     if (!user || !(await bcrypt.compare(password, user.password)))
       return res.status(400).json({ error: 'Invalid credentials' });
+
+    if (!user.qrCode) {
+      user.qrCode = uuidv4();
+      await user.save();
+    }
 
     const token = jwt.sign({ id: user._id, username }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user: { id: user._id, username, qrCode: user.qrCode } });
@@ -79,8 +84,13 @@ router.post('/logout', (req, res) => {
 
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password').populate('connections', 'username qrCode isOnline lastSeen');
+    let user = await User.findById(req.user.id).select('-password').populate('connections', 'username qrCode isOnline lastSeen');
     if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    if (!user.qrCode) {
+      user.qrCode = uuidv4();
+      await user.save();
+    }
     res.json(user);
   } catch (e) {
     console.error(e);

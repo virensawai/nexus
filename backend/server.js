@@ -22,7 +22,10 @@ const ALLOWED_ORIGINS = [
   FRONTEND_URL,
   FRONTEND_URL.replace('localhost', '127.0.0.1'),
   FRONTEND_URL.replace('127.0.0.1', 'localhost'),
-  'http://localhost:5500' // Ensure this is also accessible via direct local IP maps
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
 ];
 // De-duplicate
 const uniqueOrigins = [...new Set(ALLOWED_ORIGINS)];

@@ -2,53 +2,81 @@
 
 > Privacy-first chat app. 5 connections. QR-only. No strangers.
 
+## Live Demo
+- **Frontend**: [Vercel](https://nexus-chat.vercel.app) *(update with your Vercel URL)*
+- **Backend**: [Render](https://nexus-o9t2.onrender.com)
+
 ## Stack
-- **Frontend**: HTML + CSS (Glassmorphism) + Vanilla JS
+- **Frontend**: React 19 + Vite (Glassmorphism dark theme)
 - **Backend**: Node.js + Express + Socket.io
-- **Database**: MongoDB (Mongoose)
-- **Auth**: JWT + bcrypt
-- **QR**: qrcodejs (generate) + jsQR (scan)
+- **Database**: MongoDB Atlas (Mongoose)
+- **Auth**: JWT (Bearer token) + bcrypt
+- **QR**: qrcode.react (generate) + jsQR (scan)
 
 ---
 
 ## Project Structure
 
 ```
-chat-app/
+nexus/
 ├── backend/
-│   ├── server.js        ← Express + Socket.io + all routes
+│   ├── server.js          ← Express + Socket.io entry
+│   ├── config/db.js       ← MongoDB connection
+│   ├── models/            ← User & Message schemas
+│   ├── routes/            ← Auth, Connections, Messages
+│   ├── sockets/chat.js    ← Real-time WebSocket handler
 │   └── package.json
 └── frontend/
-    ├── index.html       ← Single-page app
-    ├── style.css        ← Glassmorphism dark theme
-    └── app.js           ← All client logic
+    ├── index.html         ← Vite entry point
+    ├── src/
+    │   ├── App.jsx        ← Root component
+    │   ├── config.js      ← API/Socket URL config
+    │   ├── context/       ← AuthContext, SocketContext
+    │   ├── components/    ← AuthScreen, Sidebar, ChatArea, QRModals, Toast
+    │   └── index.css      ← Full design system
+    ├── vite.config.js
+    └── package.json
 ```
 
 ---
 
 ## Setup & Run
 
-### 1. Prerequisites
+### Prerequisites
 - Node.js v18+
-- MongoDB running locally (`mongod`) or a MongoDB Atlas URI
+- MongoDB Atlas URI (or local MongoDB)
 
-### 2. Backend
+### Backend
 ```bash
 cd backend
 npm install
+# Create .env with: MONGO_URI, JWT_SECRET, PORT, FRONTEND_URL
 node server.js
 # Server starts on http://localhost:4000
 ```
 
-With custom MongoDB URI:
+### Frontend
 ```bash
-MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/nexus node server.js
+cd frontend
+npm install
+npm run dev
+# Dev server starts on http://localhost:5173
 ```
 
-### 3. Frontend
-Just open `frontend/index.html` in your browser.
+---
 
-> ⚠️ Camera (QR scan) requires HTTPS or localhost. On localhost it works fine.
+## Environment Variables
+
+### Backend (`backend/.env`)
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `MONGO_URI` | MongoDB connection string | `mongodb+srv://user:pass@cluster.mongodb.net/nexus` |
+| `JWT_SECRET` | Secret key for signing JWT tokens | `your-random-secret-here` |
+| `PORT` | Server port | `4000` |
+| `FRONTEND_URL` | Frontend origin for CORS | `https://your-app.vercel.app` |
+
+### Frontend (`frontend/src/config.js`)
+The Render backend URL is configured in `config.js`. Update `RENDER_BACKEND_URL` with your Render deployment URL.
 
 ---
 
@@ -72,6 +100,9 @@ Just open `frontend/index.html` in your browser.
 - ✅ Remove connections (frees up a slot)
 - ✅ JWT authentication (7-day tokens)
 - ✅ Message history persisted in MongoDB
+- ✅ 30-day TTL auto-cleanup for messages
+- ✅ Multi-tab support
+- ✅ Fully responsive (desktop, tablet, mobile)
 
 ---
 
@@ -82,7 +113,7 @@ Just open `frontend/index.html` in your browser.
 | POST | `/api/register` | ❌ | Create account |
 | POST | `/api/login` | ❌ | Login, get token |
 | GET | `/api/me` | ✅ | Get profile + connections |
-| GET | `/api/user/qr/:qrCode` | ✅ | Lookup user by QR UUID |
+| GET | `/api/connect/:qrCode` | ✅ | Lookup user by QR UUID |
 | POST | `/api/connect` | ✅ | Connect via QR code |
 | DELETE | `/api/connect/:id` | ✅ | Remove connection |
 | GET | `/api/messages/:userId` | ✅ | Get message history |
@@ -90,7 +121,7 @@ Just open `frontend/index.html` in your browser.
 ## Socket Events
 
 | Event | Direction | Payload |
-|-------|-----------|---------|
+|-------|-----------|---------| 
 | `send_message` | Client → Server | `{ receiverId, text }` |
 | `message_sent` | Server → Client | message object |
 | `new_message` | Server → Client | message object |
@@ -98,12 +129,29 @@ Just open `frontend/index.html` in your browser.
 | `messages_read` | Server → Client | `{ by, convId }` |
 | `user_status` | Server → Client | `{ userId, isOnline }` |
 | `new_connection` | Server → Client | user object |
+| `request_online_status` | Client → Server | `{ connectionIds }` |
+| `online_status_response` | Server → Client | `{ [id]: boolean }` |
 
 ---
 
-## Production Checklist
-- [ ] Set `JWT_SECRET` env variable to a long random string
-- [ ] Set `MONGO_URI` to your production MongoDB
-- [ ] Serve frontend via HTTPS (required for camera)
-- [ ] Add rate limiting (e.g. `express-rate-limit`)
-- [ ] Consider message encryption at rest
+## Deployment
+
+### Frontend → Vercel
+1. Push to GitHub
+2. Connect repo to Vercel
+3. Set root directory to `frontend`
+4. Build command: `npm run build`
+5. Output directory: `dist`
+
+### Backend → Render
+1. Push to GitHub
+2. Create a new Web Service on Render
+3. Set root directory to `backend`
+4. Build command: `npm install`
+5. Start command: `node server.js`
+6. Add environment variables: `MONGO_URI`, `JWT_SECRET`, `FRONTEND_URL`
+
+---
+
+## License
+MIT

@@ -46,11 +46,15 @@ router.post('/', authMiddleware, async (req, res) => {
     const io = req.app.get('io');
     const onlineUsers = req.app.get('onlineUsers');
     const targetSockets = onlineUsers.get(them._id.toString());
+    console.log('[DEBUG] them._id:', them._id.toString());
+    console.log('[DEBUG] onlineUsers has?', onlineUsers.has(them._id.toString()));
+    console.log('[DEBUG] onlineUsers content:', Array.from(onlineUsers.keys()));
+    console.log('[DEBUG] targetSockets:', targetSockets);
     
     if (targetSockets && targetSockets.size > 0 && io) {
       targetSockets.forEach(socketId => {
         io.to(socketId).emit('new_connection', {
-          id: me._id, username: me.username, qrCode: me.qrCode, isOnline: true
+          id: me._id.toString(), username: me.username, qrCode: me.qrCode, isOnline: true
         });
       });
     }

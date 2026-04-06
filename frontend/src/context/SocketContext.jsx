@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef } from 'r
 import { io } from 'socket.io-client';
 import { CONFIG } from '../config';
 import { useAuth } from './AuthContext';
+import { toast } from '../components/Toast';
 
 const SocketContext = createContext();
 
@@ -137,6 +138,10 @@ export const SocketProvider = ({ children }) => {
           c => String(c._id || c.id) === String(newUser.id)
         );
         if (alreadyExists) return prev;
+        
+        // Notify the user visually
+        toast(`Connected with ${newUser.username}!`);
+        
         return {
           ...prev,
           connections: [...existing, { _id: newUser.id, username: newUser.username, qrCode: newUser.qrCode, isOnline: true }]

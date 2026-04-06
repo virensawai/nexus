@@ -2,13 +2,41 @@
 const API = window.CONFIG.API;
 let socket = null;
 
+/* ── Message Cache (localStorage persistence so refresh doesn't wipe messages) ── */
+const MSG_CACHE_KEY = 'nexus_msg_cache';
+const UNREAD_CACHE_KEY = 'nexus_unread_cache';
+
+function loadMsgCache() {
+  try { return JSON.parse(localStorage.getItem(MSG_CACHE_KEY) || '{}'); } catch { return {}; }
+}
+function saveMsgCache(messages) {
+  try {
+    // Keep only last 100 messages per conversation to avoid bloating storage
+    const trimmed = {};
+    for (const uid in messages) {
+      trimmed[uid] = messages[uid].filter(m => !m._optimistic).slice(-100);
+    }
+    localStorage.setItem(MSG_CACHE_KEY, JSON.stringify(trimmed));
+  } catch(e) { console.warn('Cache save failed:', e); }
+}
+function loadUnreadCache() {
+  try { return JSON.parse(localStorage.getItem(UNREAD_CACHE_KEY) || '{}'); } catch { return {}; }
+}
+function saveUnreadCache(unread) {
+  try { localStorage.setItem(UNREAD_CACHE_KEY, JSON.stringify(unread)); } catch {}
+}
+function clearCacheForUser() {
+  localStorage.removeItem(MSG_CACHE_KEY);
+  localStorage.removeItem(UNREAD_CACHE_KEY);
+}
+
 /* ── State ───────────────────────────────────────────────────────── */
 let state = {
   me: null,
   connections: [],
   activeChatId: null,
-  messages: {},        // { visibleUserId: [msg, ...] }
-  unread: {},          // { visibleUserId: count }
+  messages: loadMsgCache(),   // pre-load from localStorage so messages survive refresh
+  unread: loadUnreadCache(),  // pre-load unread counts too
   scannerStream: null,
   scannerInterval: null,
   scannedUser: null,
@@ -87,6 +115,7 @@ async function logout() {
   try { await apiFetch('/logout', 'POST'); } catch (e) {} // notify backend
   
   localStorage.removeItem('nexus_token'); // Clear stored token
+  clearCacheForUser(); // Wipe message/unread cache on logout
   
   state = { me: null, connections: [], activeChatId: null, messages: {}, unread: {}, scannerStream: null, scannerInterval: null, scannedUser: null, currentTab: 'login' };
   
@@ -152,13 +181,36 @@ function connectSocket() {
     console.error('[socket] Connection error:', err.message);
   });
 
-  socket.on('reconnect', (attemptNumber) => {
+  socket.on('reconnect', async (attemptNumber) => {
     console.log('[socket] Reconnected after', attemptNumber, 'attempts');
     toast('Reconnected to server', 'success');
+    // Re-sync state after reconnect — backend in-memory map was wiped on Render spin-down
+    await loadMe();
+    renderConnections();
+    // Ask server for current online status of all connections
+    if (state.connections.length > 0) {
+      socket.emit('request_online_status', {
+        connectionIds: state.connections.map(c => getConnId(c))
+      });
+    }
+    // Re-fetch messages for active chat if one is open
+    if (state.activeChatId) {
+      await openChat(state.activeChatId, true); // true = silent (no scroll reset)
+    }
   });
 
   socket.on('reconnect_attempt', (attemptNumber) => {
     console.log('[socket] Reconnection attempt', attemptNumber);
+  });
+
+  // Handle bulk online status response after reconnect
+  socket.on('online_status_response', (statuses) => {
+    for (const [uid, isOnline] of Object.entries(statuses)) {
+      const conn = state.connections.find(c => idsMatch(getConnId(c), uid));
+      if (conn) conn.isOnline = isOnline;
+    }
+    renderConnections();
+    if (state.activeChatId) updateChatHeader();
   });
 
   socket.on('new_message', (msg) => {
@@ -167,11 +219,15 @@ function connectSocket() {
     console.log('[socket] myId:', myId, 'msg.sender:', msg.sender, 'msg.receiver:', msg.receiver);
     
     const otherUserId = pushMessage(msg);
+    saveMsgCache(state.messages); // persist to localStorage immediately
     console.log('[socket] new_message stored under key:', otherUserId, 'activeChatId:', state.activeChatId);
     
     if (!idsMatch(state.activeChatId, otherUserId)) {
+      // Chat is not open — increment unread badge
       state.unread[otherUserId] = (state.unread[otherUserId] || 0) + 1;
+      saveUnreadCache(state.unread);
     } else {
+      // Chat IS open — render it right away, no refresh needed
       socket.emit('mark_read', { senderId: msg.sender });
       renderMessages(state.activeChatId);
       scrollToBottom();
@@ -185,6 +241,7 @@ function connectSocket() {
     console.log('[socket] myId:', myId, 'msg.sender:', msg.sender, 'msg.receiver:', msg.receiver);
     
     const otherUserId = pushMessage(msg);
+    saveMsgCache(state.messages); // persist to localStorage immediately
     console.log('[socket] message_sent stored under key:', otherUserId, 'activeChatId:', state.activeChatId);
     
     // Always re-render if this chat is active
@@ -200,6 +257,7 @@ function connectSocket() {
     if (state.messages[byStr]) {
       const myId = getMyId();
       state.messages[byStr].forEach(m => { if (idsMatch(m.sender, myId)) m.read = true; });
+      saveMsgCache(state.messages);
       if (idsMatch(state.activeChatId, byStr)) renderMessages(state.activeChatId);
     }
   });
@@ -303,10 +361,11 @@ function renderConnections() {
 }
 
 /* ── Chat ─────────────────────────────────────────────────────────── */
-async function openChat(userId) {
+async function openChat(userId, silent = false) {
   const uid = String(userId);
   state.activeChatId = uid;
   state.unread[uid] = 0;
+  saveUnreadCache(state.unread);
 
   document.getElementById('chat-empty').style.display = 'none';
   const panel = document.getElementById('chat-panel');
@@ -315,8 +374,13 @@ async function openChat(userId) {
   updateChatHeader();
   renderConnections();
 
-  // Always fetch messages from server to ensure we have the latest
-  // But preserve any optimistic messages that might already be in the array
+  // Show cached messages immediately (no blank screen on refresh)
+  if (state.messages[uid] && state.messages[uid].length > 0) {
+    renderMessages(uid);
+    if (!silent) scrollToBottom();
+  }
+
+  // Then fetch fresh from server in background to catch anything missed
   document.getElementById('msg-loading').style.display = 'block';
   try {
     const res = await apiFetch(`/messages/${uid}`);
@@ -335,12 +399,13 @@ async function openChat(userId) {
         serverMsgs = [];
     }
     
-    // Merge: keep any local-only (optimistic) messages not yet in server response
+    // Merge: keep optimistic messages not yet confirmed by server
     const existingLocal = state.messages[uid] || [];
     const serverIds = new Set(serverMsgs.map(m => String(m._id)));
     const localOnly = existingLocal.filter(m => m._optimistic && !serverIds.has(String(m._id)));
     
     state.messages[uid] = [...serverMsgs, ...localOnly];
+    saveMsgCache(state.messages); // persist fresh server data
   } catch (e) { 
     console.error('Failed to load messages (falling back to cache/empty):', e); 
     if (!state.messages[uid]) {
@@ -352,7 +417,7 @@ async function openChat(userId) {
   scrollToBottom();
 
   if (socket) socket.emit('mark_read', { senderId: uid });
-  mobileHideSidebar();
+  if (!silent) mobileHideSidebar();
   document.getElementById('msg-input').focus();
 }
 
@@ -462,6 +527,7 @@ function sendMessage() {
 
   if (!state.messages[uid]) state.messages[uid] = [];
   state.messages[uid].push(optimisticMsg);
+  saveMsgCache(state.messages); // persist optimistic too
   renderMessages(uid);
   scrollToBottom();
   renderConnections();

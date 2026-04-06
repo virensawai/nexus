@@ -10,7 +10,20 @@ function makeConversationId(a, b) {
 router.get('/:otherId', authMiddleware, async (req, res) => {
   try {
     const convId = makeConversationId(req.user.id, req.params.otherId);
-    const messages = await Message.find({ conversationId: convId }).sort({ createdAt: 1 }).limit(100);
+    const rawMsgs = await Message.find({ conversationId: convId }).sort({ createdAt: 1 }).limit(100);
+
+    // Serialize ObjectIds to strings so frontend idsMatch() works reliably
+    const messages = rawMsgs.map(m => ({
+      _id: m._id.toString(),
+      conversationId: m.conversationId,
+      sender: m.sender.toString(),
+      receiver: m.receiver.toString(),
+      text: m.text,
+      read: m.read,
+      readAt: m.readAt,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt
+    }));
 
     // Mark incoming as read
     await Message.updateMany(

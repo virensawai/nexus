@@ -115,6 +115,18 @@ module.exports = (io, onlineUsers) => {
       }
     });
 
+    // Allow client to ask who among their connections is online (needed after Render spin-up)
+    socket.on('request_online_status', async ({ connectionIds }) => {
+      try {
+        if (!Array.isArray(connectionIds)) return;
+        const statuses = {};
+        for (const cid of connectionIds) {
+          statuses[cid] = onlineUsers.has(cid) && onlineUsers.get(cid).size > 0;
+        }
+        socket.emit('online_status_response', statuses);
+      } catch (e) { console.error(e); }
+    });
+
     socket.on('disconnect', async () => {
       const userSockets = onlineUsers.get(userId);
       if (userSockets) {

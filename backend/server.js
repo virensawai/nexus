@@ -17,11 +17,14 @@ const server = http.createServer(app);
 
 // CORS: Allow both localhost and 127.0.0.1 (browsers treat them as different origins)
 // With Vercel -> Render cross domain, allowing generic localhosts + frontend production host is necessary
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://127.0.0.1:5500';
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://127.0.0.1:5500').replace(/\/+$/, ''); // strip trailing slash
+console.log('FRONTEND_URL configured as:', FRONTEND_URL);
+
 const ALLOWED_ORIGINS = [
   FRONTEND_URL,
   FRONTEND_URL.replace('localhost', '127.0.0.1'),
   FRONTEND_URL.replace('127.0.0.1', 'localhost'),
+  'https://nexus-me.vercel.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
   'http://localhost:5173',
@@ -29,6 +32,7 @@ const ALLOWED_ORIGINS = [
 ];
 // De-duplicate
 const uniqueOrigins = [...new Set(ALLOWED_ORIGINS)];
+console.log('Allowed CORS origins:', uniqueOrigins);
 
 const corsOptions = {
   origin: function (origin, callback) {
@@ -38,22 +42,26 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
+      // Return false instead of Error to avoid 500 on preflight
+      callback(null, false);
     }
   },
-  methods: ['GET', 'POST', 'DELETE', 'PUT'],
-  // IMPORTANT: allow Authorization header to pass through CORS successfully
+  methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 };
 
 const io = new Server(server, { cors: corsOptions });
 
-// Middleware
-app.use(helmet());
+// Middleware — CORS must come BEFORE helmet so preflight OPTIONS requests succeed
 app.use(cors(corsOptions));
+// Explicitly handle all OPTIONS preflight requests
+app.options('*', cors(corsOptions));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginOpenerPolicy: false
+}));
 app.use(express.json());
-// app.use(cookieParser()); // Kept for legacy usage but not needed for auth
 
 // State Tracker
 const onlineUsers = new Map();

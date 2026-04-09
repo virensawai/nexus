@@ -12,7 +12,8 @@ export const AuthProvider = ({ children }) => {
 
   const apiFetch = async (path, method = 'GET', body = null) => {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
-    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+    const currentToken = localStorage.getItem('nexus_token');
+    if (currentToken) opts.headers['Authorization'] = `Bearer ${currentToken}`;
     if (body) opts.body = JSON.stringify(body);
     return fetch(CONFIG.API + path, opts);
   };
